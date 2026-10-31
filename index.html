@@ -16,7 +16,7 @@
        2) 域名白名单填：clin88980-cmyk.github.io
        3) 把 key 粘到这里
      留空则使用「选地址」降级模式（不影响点餐功能）。 */
-  window.TMAP_KEY = '';
+  window.TMAP_KEY = 'CQCBZ-GBA3Z-2ZMXR-TEPK6-OHIGV-2MBNU';
 
   window.__loadTMap = function(cb){
     if (typeof TMap !== 'undefined') { cb(true); return; }
@@ -2028,18 +2028,24 @@ const _rgcCache = new Map();   // 逆解析缓存：同网格不重复请求，�
 
 function openMap(){
   document.getElementById('mapView').classList.add('on');
+  // 上次可能走过降级把地图区藏了，这里要恢复，否则容器高度为 0 初始化必失败
+  var box = document.getElementById('mapBox');
+  if(box) box.style.display='';
   if(_map){ setTimeout(function(){ _map.resize && _map.resize(); },260); return; }
-  // 先占位，避免 SDK 加载期间是一片空白
   document.getElementById('mvAddr').textContent='正在打开地图…';
   document.getElementById('mvSub').textContent='稍等一下';
-  // 等过渡动画结束再初始化，否则容器高度为 0 导致白屏
-  setTimeout(function(){
-    if (typeof window.__loadTMap === 'function'){
-      window.__loadTMap(function(ok){ ok ? initMap() : mapFallback('地图加载不出来'); });
-    } else {
-      initMap();
+  // 等过渡动画结束 + 容器真的有高度了再初始化
+  var tries = 0;
+  (function waitBox(){
+    var r = box ? box.getBoundingClientRect() : {height:0};
+    if(r.height > 50 || tries++ > 12){
+      if (typeof window.__loadTMap === 'function'){
+        window.__loadTMap(function(ok){ ok ? initMap() : mapFallback('地图加载不出来'); });
+      } else { initMap(); }
+      return;
     }
-  }, 320);
+    setTimeout(waitBox, 60);
+  })();
 }
 function closeMap(){ document.getElementById('mapView').classList.remove('on'); }
 
@@ -2169,9 +2175,13 @@ function reverseGeo(pt){
       full:d.address||''
     };
     _rgcCache.set(key,info); paintAddr(info);
-  }).catch(function(){
-    // 密钥代理不可达时这里会失败，直接给可选地址，不让用户卡住
-    mapFallback('这个环境下定位用不了');
+  }).catch(function(err){
+    // 地图本身还能用，只是地址名取不到：保留地图，让用户拖拽选点即可
+    var quota = err && (err.status===121 || /上限/.test(err.message||''));
+    document.getElementById('mvAddr').textContent = '拖动地图选个位置';
+    document.getElementById('mvSub').textContent = quota
+      ? '今天的地址查询次数用完了，位置照样能选'
+      : '地址名没取到，位置照样能选';
   });
 }
 function paintAddr(info){
@@ -2183,19 +2193,35 @@ function paintAddr(info){
 
 // 周边餐饮
 function nearbyShops(pt){
-  // 注意：Search.searchNearby 配额极低（个人 200 PV/日）且常返回空，
-  // 改用 Suggestion 服务（30 万 PV/日），同样返回带坐标的真实 POI。
+  // 用自有 key 后 searchNearby 可用，结果比 Suggestion 更准且自带距离
+  _search.searchNearby({
+    keyword:'美食', center:new TMap.LatLng(pt.lat,pt.lng), radius:1000
+  }).then(function(r){
+    var d=r.data||[];
+    if(!d.length) return fallbackSuggest(pt);
+    d.forEach(function(x){
+      if(x._distance==null && x.location) x._distance = haversine(pt, x.location);
+    });
+    d.sort(function(a,b){ return (a._distance||1e9)-(b._distance||1e9); });
+    renderPOI(d);
+  }).catch(function(){ fallbackSuggest(pt); });
+}
+
+// searchNearby 取不到时退回 Suggestion（配额更高）
+function fallbackSuggest(pt){
   _suggest.getSuggestions({
     keyword:'快餐', location:new TMap.LatLng(pt.lat,pt.lng)
   }).then(function(r){
     var d=r.data||[];
-    // 按与当前中心的直线距离排序，近的在前
     d.forEach(function(x){
       if(x.location) x._distance = haversine(pt, x.location);
     });
     d.sort(function(a,b){ return (a._distance||1e9)-(b._distance||1e9); });
     renderPOI(d);
-  }).catch(function(){ mapFallback('附近商家暂时取不到'); });
+  }).catch(function(){
+    document.getElementById('poiList').innerHTML =
+      '<div class="mv-tip">附近商家没取到，可以直接拖动地图选位置。</div>';
+  });
 }
 
 // 两点间直线距离（米）
