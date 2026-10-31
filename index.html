@@ -2006,6 +2006,17 @@ const _GCJ = {
     return r;
   }
 };
+// GCJ-02 → WGS-84（反向纠偏，用迭代逼近；给 OSM 等国际服务用）
+function gcj2wgs(lat, lng){
+  var wla = lat, wln = lng;
+  for(var i=0;i<4;i++){
+    var g = wgs2gcj(wla, wln);
+    wla += lat - g.lat;
+    wln += lng - g.lng;
+  }
+  return {lat: wla, lng: wln};
+}
+
 function wgs2gcj(lat, lng){
   if(_GCJ.outOfChina(lat, lng)) return {lat:lat, lng:lng};
   var dLat = _GCJ.tLat(lng - 105.0, lat - 35.0);
@@ -2176,13 +2187,38 @@ function reverseGeo(pt){
     };
     _rgcCache.set(key,info); paintAddr(info);
   }).catch(function(err){
-    // 地图本身还能用，只是地址名取不到：保留地图，让用户拖拽选点即可
+    // 腾讯额度用完或失败时，退到免 key 的 OSM 逆地理编码，仍能给出地址名
     var quota = err && (err.status===121 || /上限/.test(err.message||''));
-    document.getElementById('mvAddr').textContent = '拖动地图选个位置';
-    document.getElementById('mvSub').textContent = quota
-      ? '今天的地址查询次数用完了，位置照样能选'
-      : '地址名没取到，位置照样能选';
+    osmReverse(pt, key, quota);
   });
+}
+
+// 备用逆地理编码（OpenStreetMap，免 key）。国内精度不如腾讯，但足够标出路名/楼宇
+function osmReverse(pt, cacheKey, quota){
+  var g = gcj2wgs(pt.lat, pt.lng);   // OSM 用 WGS-84，要先转回去
+  fetch('https://nominatim.openstreetmap.org/reverse?format=json&zoom=18&accept-language=zh'
+        + '&lat=' + g.lat + '&lon=' + g.lng)
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var a = d.address || {};
+      var name = d.name || a.building || a.road || a.suburb || '';
+      var full = (a.city||a.town||'') + (a.district||a.suburb||'') +
+                 (a.road||'') + (a.house_number||'');
+      if(!name && !full) throw 0;
+      var info = {addr: name || full, full: full};
+      _rgcCache.set(cacheKey, info);
+      paintAddr(info);
+      if(quota){
+        document.getElementById('mvSub').textContent =
+          (full || '已定位') + ' · 地址为近似值';
+      }
+    })
+    .catch(function(){
+      document.getElementById('mvAddr').textContent = '拖动地图选个位置';
+      document.getElementById('mvSub').textContent = quota
+        ? '今天的地址查询次数用完了，位置照样能选'
+        : '地址名没取到，位置照样能选';
+    });
 }
 function paintAddr(info){
   _addr=info.addr; _pickedPOI=null;
