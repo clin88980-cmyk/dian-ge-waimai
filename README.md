@@ -5,7 +5,9 @@
 
 ## 在线体验
 
-开启 GitHub Pages 后访问：`https://<用户名>.github.io/dian-ge-waimai/`
+**https://clin88980-cmyk.github.io/dian-ge-waimai/**
+
+手机、电脑都适配，手机上是全屏模式。
 
 ## 包含什么
 
